@@ -1,0 +1,52 @@
+# Downloaded datasets and prepared tiles
+**/dataset/
+**/datasets/
+**/data/raw/
+**/data/processed/
+
+# Model artifacts and generated experiment output
+**/save_weights/
+**/checkpoints/
+**/ckpts/
+**/results/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# Downloaded archives and large external assets
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# Python caches, environments, and coverage output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Notebook state
+.ipynb_checkpoints/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Logs, temporary files, editors, and operating-system metadata
+*.log
+tmp/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
