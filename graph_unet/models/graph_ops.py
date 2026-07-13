@@ -1,6 +1,6 @@
 """
 models/graph_ops.py
-Core Graph U-Net operations — implemented from paper equations exactly.
+Core Graph U-Net operations inspired by the paper equations.
 
 Paper: "Graph U-Nets" Gao & Ji, ICML 2019
        https://proceedings.mlr.press/v97/gao19a/gao19a.pdf

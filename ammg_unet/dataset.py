@@ -18,8 +18,13 @@ import numpy as np
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset, random_split
-import rasterio                      # reads GeoTIFF satellite files
-from rasterio.enums import Resampling
+
+try:
+    import rasterio                  # reads GeoTIFF satellite files
+    from rasterio.enums import Resampling
+except ImportError:                  # PNG/JPEG workflows can still be imported/tested
+    rasterio = None
+    Resampling = None
 
 from config import MEAN, STD, SEED
 
@@ -36,6 +41,9 @@ def _load_image(path: str, size: int) -> np.ndarray:
     """Load any image file (jpg / png / tif) as float32 RGB [H,W,3] in [0,1]."""
     ext = os.path.splitext(path)[1].lower()
     if ext in {'.tif', '.tiff'}:
+        if rasterio is None:
+            raise ImportError(
+                "rasterio is required to read TIFF images; install requirements.txt")
         with rasterio.open(path) as src:
             # Read first 3 bands as RGB
             if src.count >= 3:
@@ -61,6 +69,9 @@ def _load_mask(path: str, size: int) -> np.ndarray:
     """Load mask as binary int64 [H,W] with values {0, 1}."""
     ext = os.path.splitext(path)[1].lower()
     if ext in {'.tif', '.tiff'}:
+        if rasterio is None:
+            raise ImportError(
+                "rasterio is required to read TIFF masks; install requirements.txt")
         with rasterio.open(path) as src:
             data = src.read(1,
                             out_shape=(size, size),
@@ -217,7 +228,7 @@ class HokkaidoDataset(LandslideDataset):
 
 def get_dataloaders(img_dir, mask_dir, batch_size, img_size,
                     val_split=0.2, augment_train=True,
-                    label_dir=None):
+                    label_dir=None, num_workers=None):
     """
     Build train/val DataLoaders with automatic 80/20 split.
 
@@ -254,10 +265,12 @@ def get_dataloaders(img_dir, mask_dir, batch_size, img_size,
     else:
         train_ds = train_ds_base
 
-    nw = min(4, os.cpu_count() or 1)   # num_workers
+    nw = (min(4, os.cpu_count() or 1) if num_workers is None
+          else max(0, int(num_workers)))
     train_loader = DataLoader(train_ds, batch_size=batch_size,
                                shuffle=True,  num_workers=nw,
-                               pin_memory=True, drop_last=True)
+                               pin_memory=True,
+                               drop_last=len(train_ds) >= batch_size)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size,
                                shuffle=False, num_workers=nw,
                                pin_memory=True)
@@ -267,13 +280,53 @@ def get_dataloaders(img_dir, mask_dir, batch_size, img_size,
     return train_loader, val_loader
 
 
+def make_split_indices(num_samples, train_fraction, seed=SEED,
+                       val_fraction=0.2, test_fraction=0.2):
+    """Return deterministic, directly indexable train/validation/test indices.
+
+    Validation and test indices depend only on ``num_samples`` and ``seed``.
+    A smaller training fraction is therefore a strict subset of the 60% pool,
+    which makes the four transfer-learning conditions directly comparable.
+    """
+    if num_samples < 3:
+        raise ValueError("At least three samples are required for a three-way split")
+    if val_fraction <= 0 or test_fraction <= 0:
+        raise ValueError("Validation and test fractions must be positive")
+
+    max_train_fraction = 1.0 - val_fraction - test_fraction
+    if max_train_fraction <= 0:
+        raise ValueError("Validation and test fractions leave no training data")
+    if not 0 < train_fraction <= max_train_fraction + 1e-12:
+        raise ValueError(
+            f"train_fraction must be in (0, {max_train_fraction:.3f}]")
+
+    n_val = max(1, int(val_fraction * num_samples))
+    n_test = max(1, int(test_fraction * num_samples))
+    train_pool_size = num_samples - n_val - n_test
+    if train_pool_size < 1:
+        raise ValueError("Fractions leave no training samples")
+
+    n_train = min(
+        train_pool_size,
+        max(1, int(round(train_fraction * num_samples))),
+    )
+    permutation = np.random.default_rng(seed).permutation(num_samples).tolist()
+    train_pool = permutation[:train_pool_size]
+    val_indices = permutation[train_pool_size:train_pool_size + n_val]
+    test_indices = permutation[train_pool_size + n_val:]
+
+    return train_pool[:n_train], val_indices, test_indices
+
+
 def get_three_way_split(img_dir, mask_dir, img_size, batch_size,
-                         label_dir=None, data_fraction=1.0):
+                         label_dir=None, data_fraction=0.6,
+                         num_workers=None, augment_train=False):
+    """Build a fixed validation/test split and a nested training subset.
+
+    Target-domain augmentation is disabled by default to match the protocol
+    described in the landslide transfer-learning paper. Callers may opt in for
+    exploratory experiments.
     """
-    60% train / 20% val / 20% test split — matches paper experimental setup.
-    Returns: train_loader, val_loader, test_loader, test_dataset
-    """
-    np.random.seed(SEED)
     if label_dir:
         full_ds = HokkaidoDataset(img_dir, label_dir, mask_dir,
                                    img_size=img_size, augment=False)
@@ -281,55 +334,50 @@ def get_three_way_split(img_dir, mask_dir, img_size, batch_size,
         full_ds = LandslideDataset(img_dir, mask_dir,
                                     img_size=img_size, augment=False)
 
-    N = len(full_ds)
-    keep_n = max(3, int(round(data_fraction * N))) if data_fraction < 1.0 else N
-    keep_n = min(keep_n, N)
+    tr_idx, va_idx, te_idx = make_split_indices(
+        len(full_ds), data_fraction, seed=SEED)
 
-    if keep_n < N:
-        keep_idx = np.random.permutation(N).tolist()[:keep_n]
-        full_ds = Subset(full_ds, keep_idx)
-        N = len(full_ds)
-
-    n_test = max(1, int(0.2 * N))
-    n_val  = max(1, int(0.2 * N))
-    n_train = N - n_val - n_test
-
-    idx    = np.random.permutation(N).tolist()
-    tr_idx = idx[:n_train]
-    va_idx = idx[n_train:n_train+n_val]
-    te_idx = idx[n_train+n_val:]
-
-    if label_dir:
-        aug_ds = HokkaidoDataset(img_dir, label_dir, mask_dir,
-                                  img_size=img_size, augment=True)
+    if augment_train:
+        if label_dir:
+            train_ds = HokkaidoDataset(
+                img_dir, label_dir, mask_dir,
+                img_size=img_size, augment=True)
+        else:
+            train_ds = LandslideDataset(
+                img_dir, mask_dir, img_size=img_size, augment=True)
     else:
-        aug_ds = LandslideDataset(img_dir, mask_dir,
-                                   img_size=img_size, augment=True)
+        train_ds = full_ds
 
-    nw = min(4, os.cpu_count() or 1)
-    tr = DataLoader(Subset(aug_ds,  tr_idx), batch_size=batch_size,
-                    shuffle=True,  num_workers=nw, pin_memory=True, drop_last=True)
+    nw = (min(4, os.cpu_count() or 1) if num_workers is None
+          else max(0, int(num_workers)))
+    tr = DataLoader(Subset(train_ds, tr_idx), batch_size=batch_size,
+                    shuffle=True, num_workers=nw, pin_memory=True,
+                    drop_last=len(tr_idx) >= batch_size)
     va = DataLoader(Subset(full_ds, va_idx), batch_size=batch_size,
                     shuffle=False, num_workers=nw, pin_memory=True)
     te = DataLoader(Subset(full_ds, te_idx), batch_size=batch_size,
                     shuffle=False, num_workers=nw, pin_memory=True)
 
-    print(f"  3-way split  train={n_train}  val={n_val}  test={n_test}")
+    print(f"  3-way split  train={len(tr_idx)}  val={len(va_idx)}  "
+          f"test={len(te_idx)}")
     return tr, va, te, Subset(full_ds, te_idx)
 
 
 def make_loaders(img_dir, mask_dir, batch_size, img_size, num_workers=None):
     """Backward-compatible wrapper used by pretrain.py."""
     return get_dataloaders(img_dir, mask_dir, batch_size=batch_size,
-                           img_size=img_size)
+                           img_size=img_size, num_workers=num_workers)
 
 
 def make_finetune_loaders(img_dir, mask_dir, data_fraction, batch_size,
-                          img_size, label_dir=None):
+                          img_size, label_dir=None, num_workers=None,
+                          augment_train=False):
     """Backward-compatible wrapper used by finetune.py."""
     return get_three_way_split(img_dir, mask_dir, img_size=img_size,
                                batch_size=batch_size, label_dir=label_dir,
-                               data_fraction=data_fraction)
+                               data_fraction=data_fraction,
+                               num_workers=num_workers,
+                               augment_train=augment_train)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -19,18 +19,18 @@ from .grb import GraphReasoningBlock
 
 
 class MGRM(nn.Module):
-    def __init__(self, in_ch: int):
+    def __init__(self, in_ch: int, grb_ratio: int = 4):
         super().__init__()
-        self.grb1  = GraphReasoningBlock(in_ch)
+        self.grb1  = GraphReasoningBlock(in_ch, ratio=grb_ratio)
 
         self.pool2 = nn.MaxPool2d(2, stride=2)
-        self.grb2  = GraphReasoningBlock(in_ch)
+        self.grb2  = GraphReasoningBlock(in_ch, ratio=grb_ratio)
 
         self.pool3 = nn.MaxPool2d(3, stride=3)
-        self.grb3  = GraphReasoningBlock(in_ch)
+        self.grb3  = GraphReasoningBlock(in_ch, ratio=grb_ratio)
 
         self.pool5 = nn.MaxPool2d(5, stride=5)
-        self.grb4  = GraphReasoningBlock(in_ch)
+        self.grb4  = GraphReasoningBlock(in_ch, ratio=grb_ratio)
 
         self.proj  = nn.Sequential(
             nn.Conv2d(4 * in_ch, in_ch, 1, bias=False),

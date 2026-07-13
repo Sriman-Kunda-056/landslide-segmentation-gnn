@@ -54,7 +54,9 @@ def test_graph_ops():
     xup, _   = unpool(xp, idx, xpre, Apre)
     assert xup.shape == (N, 64)
     assert torch.allclose(xup[idx], xp), "Position restore failed"
-    assert xup.sum(0)[~torch.isin(torch.arange(N), idx)].abs().sum() < 1e-6 or True
+    dropped = torch.ones(N, dtype=torch.bool)
+    dropped[idx] = False
+    assert torch.allclose(xup[dropped], torch.zeros_like(xup[dropped]))
     print(f"  gUnpool: {k} → {N} nodes  positions exact ✓  OK")
 
     # Encoder + Decoder round-trip
@@ -72,11 +74,16 @@ def test_graph_ops():
 def test_full_model():
     section("2. Full GraphUNet (end-to-end)")
     from models.graph_unet import GraphUNet
-    model = GraphUNet(in_ch=3, num_classes=2, feat_dim=32, hidden_dim=64,
-                       n_layers=2, pool_ratios=[0.8, 0.6], img_size=16)
-    imgs = torch.randn(2, 3, 16, 16)
+    from config import (IN_CHANNELS, NUM_CLASSES, FEAT_DIM, HIDDEN_DIM,
+                        N_LAYERS, POOL_RATIOS, GCN_DROPOUT, IMG_SIZE)
+    model = GraphUNet(
+        in_ch=IN_CHANNELS, num_classes=NUM_CLASSES,
+        feat_dim=FEAT_DIM, hidden_dim=HIDDEN_DIM,
+        n_layers=N_LAYERS, pool_ratios=POOL_RATIOS,
+        dropout=GCN_DROPOUT, img_size=IMG_SIZE)
+    imgs = torch.randn(1, IN_CHANNELS, IMG_SIZE, IMG_SIZE)
     out  = model(imgs)
-    assert out.shape == (2, 2, 16, 16), f"Shape: {out.shape}"
+    assert out.shape == (1, NUM_CLASSES, IMG_SIZE, IMG_SIZE), f"Shape: {out.shape}"
     assert torch.isfinite(out).all()
     out.mean().backward()
     no_grad = [n for n,p in model.named_parameters() if p.grad is None]
@@ -120,8 +127,24 @@ def test_metrics():
     print("  Metrics: PASSED ✓")
 
 
+def test_splits():
+    section("5. Fine-tuning split")
+    from dataset import make_finetune_split_indices
+
+    train20, val20, test20 = make_finetune_split_indices(100, 0.2, seed=42)
+    train60, val60, test60 = make_finetune_split_indices(100, 0.6, seed=42)
+    assert len(train20) == 20 and len(train60) == 60
+    assert set(train20).issubset(train60)
+    assert val20 == val60 and test20 == test60
+    assert not (set(train60) & set(val60))
+    assert not (set(train60) & set(test60))
+    assert not (set(val60) & set(test60))
+    print("  Nested train sets and fixed evaluation sets: PASSED ✓")
+
+
 if __name__ == "__main__":
-    tests  = [test_graph_ops, test_full_model, test_loss, test_metrics]
+    tests  = [test_graph_ops, test_full_model, test_loss, test_metrics,
+              test_splits]
     failed = []
     for fn in tests:
         try:   fn()
@@ -136,10 +159,9 @@ if __name__ == "__main__":
         print("Fix the above errors before training.")
         sys.exit(1)
     else:
-        print("ALL TESTS PASSED ✓  — ready to train")
+        print("ALL PROTOTYPE COMPONENT TESTS PASSED ✓")
         print("="*50)
         print("\nRun order:")
         print("  1. python test_components.py")
-        print("  2. python pretrain.py --dataset bijie --epochs 5")
-        print("  3. python pretrain.py --dataset bijie")
-        print("  4. python finetune.py --dataset hokkaido")
+        print("  2. python pretrain.py --dataset bijie --epochs 5 --imgsize 16")
+        print("  3. Review the dense-graph limitations in README.md")

@@ -1,17 +1,18 @@
 """
 finetune.py
-Transfer learning — all 4 experimental conditions from the paper.
+Transfer learning across four controlled conditions for this prototype.
 
 Condition 1: 20% data, NO transfer learning
-Condition 2: 20% data, WITH transfer learning   ← key result
+Condition 2: 20% data, WITH transfer learning
 Condition 3: 60% data, NO transfer learning
-Condition 4: 60% data, WITH transfer learning   ← best
+Condition 4: 60% data, WITH transfer learning
 
 Usage:
   python finetune.py --pretrained save_weights/GraphUNet_pretrained_best.pth
                      --dataset hokkaido
 """
-import os, argparse, torch, matplotlib
+import os, argparse, random, torch, matplotlib
+import numpy as np
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
@@ -31,6 +32,7 @@ def parse_args():
     p.add_argument("--epochs",     type=int,   default=FINETUNE_EPOCHS)
     p.add_argument("--batch",      type=int,   default=FINETUNE_BATCH)
     p.add_argument("--imgsize",    type=int,   default=IMG_SIZE)
+    p.add_argument("--workers",    type=int,   default=0)
     p.add_argument("--conditions", nargs="+",
                    choices=["1","2","3","4"], default=["1","2","3","4"])
     return p.parse_args()
@@ -53,15 +55,25 @@ def build_model(args):
 
 def run_condition(cid, use_tl, frac, pretrained_path,
                    img_dir, mask_dir, args, criterion):
-    label = f"Cond{cid}_{'TL' if use_tl else 'noTL'}_{int(frac*100)}pct"
+    label = (f"{args.dataset}_Cond{cid}_"
+             f"{'TL' if use_tl else 'noTL'}_{int(frac*100)}pct")
+
+    # Make results independent of the order in which conditions are run.
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
     print(f"\n{'─'*50}\n  {label}\n{'─'*50}")
 
     train_loader, val_loader, test_loader = make_finetune_loaders(
         img_dir, mask_dir, data_fraction=frac,
-        batch_size=args.batch, img_size=args.imgsize)
+        batch_size=args.batch, img_size=args.imgsize,
+        num_workers=args.workers)
 
     model = build_model(args)
-    lr    = FINETUNE_LR if use_tl else PRETRAIN_LR
+    # The controlled comparison differs only in weight initialisation.
+    lr = FINETUNE_LR
 
     if use_tl:
         model = load_pretrained_graph_unet(model, pretrained_path, DEVICE)
@@ -71,7 +83,7 @@ def run_condition(cid, use_tl, frac, pretrained_path,
     sched = torch.optim.lr_scheduler.PolynomialLR(
                 opt, total_iters=args.epochs, power=LR_POWER)
 
-    best_f1   = 0.0
+    best_f1   = float("-inf")
     best_path = os.path.join(SAVE_DIR, f"{label}_best.pth")
     history   = {'train_loss':[], 'val_loss':[], 'f1':[]}
 
@@ -99,7 +111,11 @@ def run_condition(cid, use_tl, frac, pretrained_path,
 
 def main():
     args      = parse_args()
+    random.seed(SEED)
+    np.random.seed(SEED)
     torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
     criterion = CombinedLoss()
 
     img_dir, mask_dir = get_dirs(args.dataset)
@@ -145,11 +161,13 @@ def main():
     print("="*55)
 
     if "2" in results and "3" in results:
-        f2, f3 = results["2"][0], results["3"][0]
+        f2 = results["2"][1]["f1"]
+        f3 = results["3"][1]["f1"]
         diff   = abs(f2 - f3)
-        print(f"\nKey finding: 20%+TL ({f2:.1f}%) vs 60%+noTL ({f3:.1f}%)")
-        print(f"  Diff={diff:.1f}%  "
-              f"{'≈ TRANSFER LEARNING WORKS ✓' if diff < 4 else 'try more epochs'}")
+        print(f"\nTest comparison: 20%+TL ({f2:.1f}%) vs "
+              f"60%+noTL ({f3:.1f}%)")
+        print(f"  Difference={diff:.1f}%  "
+              f"({'within 4 points' if diff < 4 else 'not within 4 points'})")
 
     # Plot
     colours = {"1":"royalblue","2":"coral","3":"green","4":"purple"}

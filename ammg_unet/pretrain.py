@@ -1,26 +1,21 @@
 """
 pretrain.py
-Phase 1: Pretrain AMMG-UNet on the source domain dataset (CAS or Bijie).
+Phase 1: Pretrain the simplified AMMG-style model on CAS or Bijie.
 
-Paper settings (reproduced exactly):
+Training settings based on the paper:
   Optimizer : SGD, momentum=0.9, weight_decay=0.001
   LR        : 0.01, cubic polynomial decay over 150 epochs
   Loss      : Dice + 0.5 * CrossEntropy
 
-Reduced defaults for practicality:
-  PRETRAIN_EPOCHS = 60  (change to 150 in config.py for full paper reproduction)
-
 Usage:
     python pretrain.py --dataset bijie          # quick smoke-test on Bijie
     python pretrain.py                       # full pretraining on CAS at 512
-    python pretrain.py --dataset cas --epochs 150  # exact paper settings
+    python pretrain.py --dataset cas --epochs 150
 """
 
 import os
 import sys
 import argparse
-
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import torch
 import matplotlib.pyplot as plt
@@ -41,6 +36,9 @@ from config import (
     IMG_SIZE,
     IN_CHANNELS,
     NUM_CLASSES,
+    FEATURES,
+    GRB_RATIO,
+    DROPOUT_RATE,
     RESULTS_DIR,
     BIJIE_IMG_DIR,
     BIJIE_MASK_DIR,
@@ -121,7 +119,13 @@ def main():
     print(f"  Train batches: {len(train_loader)}   Val batches: {len(val_loader)}")
 
     # ── Model ─────────────────────────────────────────────────────────
-    model = AMGUnet(in_ch=IN_CHANNELS, num_classes=NUM_CLASSES).to(DEVICE)
+    model = AMGUnet(
+        in_ch=IN_CHANNELS,
+        num_classes=NUM_CLASSES,
+        features=FEATURES,
+        grb_ratio=GRB_RATIO,
+        dropout_rate=DROPOUT_RATE,
+    ).to(DEVICE)
     print(f"\nModel parameters: {model.count_parameters()/1e6:.1f}M")
 
     # ── Loss ──────────────────────────────────────────────────────────
@@ -145,7 +149,7 @@ def main():
 
     # ── Resume from checkpoint if given ───────────────────────────────
     start_epoch = 1
-    best_f1     = 0.0
+    best_f1     = float("-inf")
     history     = {'train_loss': [], 'val_loss': [], 'f1': []}
 
     if args.resume and os.path.exists(args.resume):
@@ -154,7 +158,7 @@ def main():
         optimizer.load_state_dict(ckpt['optimizer_state'])
         scheduler.load_state_dict(ckpt['scheduler_state'])
         start_epoch = ckpt['epoch'] + 1
-        best_f1     = ckpt.get('best_f1', 0.0)
+        best_f1     = ckpt.get('best_f1', float("-inf"))
         history     = ckpt.get('history', history)
         print(f"Resumed from epoch {ckpt['epoch']}  best_f1={best_f1:.2f}%")
 

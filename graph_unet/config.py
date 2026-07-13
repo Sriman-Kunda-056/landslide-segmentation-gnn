@@ -16,11 +16,9 @@ SAVE_DIR      = "save_weights"
 RESULTS_DIR   = "results"
 
 # ── Image settings ─────────────────────────────────────────────────────────
-# IMPORTANT: smaller img_size for graph model
-# Graph adjacency N=H*W grows quadratically — 64×64=4096 nodes is feasible
-# 128×128=16384 nodes is pushing memory limits on CPU
-# 512×512=262144 nodes is only feasible with sparse adjacency (future work)
-IMG_SIZE      = 64          # use 64 for quick tests, 128 for better results
+# IMPORTANT: this prototype uses dense adjacency and graph-power operations.
+# Keep the grid tiny. Useful image resolutions require a sparse redesign.
+IMG_SIZE      = 16          # dense prototype; larger grids become very expensive
 IN_CHANNELS   = 3
 NUM_CLASSES   = 2
 MEAN          = [0.485, 0.456, 0.406]

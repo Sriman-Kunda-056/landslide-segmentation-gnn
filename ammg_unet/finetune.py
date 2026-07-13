@@ -1,16 +1,16 @@
 """
 finetune.py
-Phase 2: Fine-tune pretrained AMMG-UNet on a target domain dataset.
+Phase 2: Fine-tune the simplified AMMG-style model on a target dataset.
 
-Reproduces Paper Table 1 / Table 2 — runs all 4 experimental conditions:
+Runs four paper-inspired experimental conditions:
   Condition 1: 20% data, NO transfer learning (scratch)
   Condition 2: 20% data, WITH transfer learning (fine-tune)
   Condition 3: 60% data, NO transfer learning (scratch)
   Condition 4: 60% data, WITH transfer learning (fine-tune)
 
-Paper fine-tuning settings:
-  LR: 0.001 (10× lower than pretraining)
-  Epochs: 50 (reduced to 30 in config.py)
+Target-domain settings:
+  LR: 0.001 for every condition
+  Epochs: 50
   All layers updated (no freezing)
 
 Usage:
@@ -19,10 +19,10 @@ Usage:
 """
 
 import os
-import copy
 import argparse
+import random
 
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+import numpy as np
 
 import torch
 import matplotlib.pyplot as plt
@@ -47,6 +47,10 @@ def parse_args():
     p.add_argument("--epochs",  type=int,   default=FINETUNE_EPOCHS)
     p.add_argument("--batch",   type=int,   default=FINETUNE_BATCH)
     p.add_argument("--imgsize", type=int,   default=IMG_SIZE)
+    p.add_argument("--workers", type=int,   default=FINETUNE_WORKERS)
+    p.add_argument(
+        "--augment", action="store_true",
+        help="Opt in to random target-domain flips (off by default)")
     p.add_argument("--conditions", nargs="+",
                    choices=["1","2","3","4"], default=["1","2","3","4"],
                    help="Which conditions to run (default: all 4)")
@@ -55,8 +59,8 @@ def parse_args():
 
 def get_dirs(name):
     return {
-        "hokkaido":     (HOK_IMG_DIR,  HOK_MASK_DIR),
-        "bijie":        (BIJIE_IMG_DIR,  BIJIE_MASK_DIR),
+        "hokkaido": (HOK_IMG_DIR, HOK_MASK_DIR, FINETUNE_LABEL_DIR),
+        "bijie": (BIJIE_IMG_DIR, BIJIE_MASK_DIR, None),
     }[name]
 
 
@@ -93,12 +97,20 @@ def build_optimizer_scheduler(model, lr, epochs):
 
 def run_condition(cond_id, use_tl, data_frac,
                   pretrained_path, img_dir, mask_dir,
-                  args, criterion, device):
+                  label_dir, args, criterion, device):
     """
     Run one experimental condition end-to-end.
     Returns: best_f1 (float), final_metrics (dict), history (dict)
     """
-    label = f"Cond{cond_id}_{'TL' if use_tl else 'noTL'}_{int(data_frac*100)}pct"
+    label = (f"{args.dataset}_Cond{cond_id}_"
+             f"{'TL' if use_tl else 'noTL'}_{int(data_frac*100)}pct")
+
+    # Make results independent of the order in which conditions are run.
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
     print(f"\n{'─'*55}")
     print(f"  {label}")
     print(f"  TL={use_tl}  data={int(data_frac*100)}%  epochs={args.epochs}")
@@ -109,26 +121,33 @@ def run_condition(cond_id, use_tl, data_frac,
         img_dir, mask_dir,
         data_fraction=data_frac,
         batch_size=args.batch,
-        img_size=args.imgsize
+        img_size=args.imgsize,
+        label_dir=label_dir,
+        num_workers=args.workers,
+        augment_train=args.augment,
     )
 
     # ── Model ──────────────────────────────────────────────────────────
-    model = AMGUnet(in_ch=IN_CHANNELS, num_classes=NUM_CLASSES).to(device)
+    model = AMGUnet(
+        in_ch=IN_CHANNELS,
+        num_classes=NUM_CLASSES,
+        features=FEATURES,
+        grb_ratio=GRB_RATIO,
+        dropout_rate=DROPOUT_RATE,
+    ).to(device)
 
     if use_tl:
         # Transfer learning: initialise from pretrained weights
-        # LR = 0.001 (10× lower — don't destroy pretrained features)
         model = load_pretrained(model, pretrained_path, device)
-        lr = FINETUNE_LR          # 0.001
-    else:
-        # No transfer learning: random initialisation
-        # LR = 0.01 (full learning rate — training from scratch)
-        lr = PRETRAIN_LR          # 0.01
+
+    # Keep target-domain hyperparameters identical across TL/no-TL conditions.
+    # The controlled experiment should differ only in weight initialisation.
+    lr = FINETUNE_LR
 
     opt, sched = build_optimizer_scheduler(model, lr, args.epochs)
 
     # ── Training loop ──────────────────────────────────────────────────
-    best_f1   = 0.0
+    best_f1   = float("-inf")
     best_path = os.path.join(SAVE_DIR, f"{label}_best.pth")
     history   = {'train_loss': [], 'val_loss': [], 'f1': []}
 
@@ -163,11 +182,15 @@ def run_condition(cond_id, use_tl, data_frac,
 
 def main():
     args  = parse_args()
+    random.seed(SEED)
+    np.random.seed(SEED)
     torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
     device = DEVICE
     criterion = CombinedLoss()
 
-    img_dir, mask_dir = get_dirs(args.dataset)
+    img_dir, mask_dir, label_dir = get_dirs(args.dataset)
 
     print("=" * 60)
     print("AMMG-UNet  —  FINE-TUNING  (Transfer Learning)")
@@ -195,7 +218,7 @@ def main():
         best_f1, test_m, hist = run_condition(
             cid, use_tl, frac,
             args.pretrained, img_dir, mask_dir,
-            args, criterion, device
+            label_dir, args, criterion, device
         )
         all_results[cid]   = (use_tl, frac, best_f1, test_m)
         all_histories[cid] = hist
@@ -220,14 +243,14 @@ def main():
               f"{m['f1']:>7.1f}%")
     print("=" * 60)
 
-    # Key finding: does 20%+TL ≈ 60%+noTL?
+    # Compare the common held-out test set, not best validation scores.
     if "2" in all_results and "3" in all_results:
-        f1_2 = all_results["2"][2]
-        f1_3 = all_results["3"][2]
+        f1_2 = all_results["2"][3]["f1"]
+        f1_3 = all_results["3"][3]["f1"]
         diff = abs(f1_2 - f1_3)
-        print(f"\nKey finding: 20%+TL ({f1_2:.1f}%) vs 60%+noTL ({f1_3:.1f}%)")
+        print(f"\nTest comparison: 20%+TL ({f1_2:.1f}%) vs 60%+noTL ({f1_3:.1f}%)")
         print(f"  Difference: {diff:.1f}%  "
-              f"({'≈ CONFIRMED ✓' if diff < 4 else 'not close yet — try more epochs'})")
+              f"({'within 4 points' if diff < 4 else 'not within 4 points'})")
 
     # ── Save curves ───────────────────────────────────────────────────
     _plot_all_conditions(all_histories, args.dataset)

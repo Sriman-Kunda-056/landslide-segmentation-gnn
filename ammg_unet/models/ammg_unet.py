@@ -47,7 +47,8 @@ class _DoubleConv(nn.Module):
 
 
 class AMGUnet(nn.Module):
-    def __init__(self, in_ch=3, num_classes=2, features=None):
+    def __init__(self, in_ch=3, num_classes=2, features=None,
+                 grb_ratio=4, dropout_rate=0.1):
         super().__init__()
         f = features or [64, 128, 256, 512]
 
@@ -58,7 +59,7 @@ class AMGUnet(nn.Module):
         self.enc4 = AttentionConv(f[2],  f[3])
 
         # Bridge
-        self.mgrm = MGRM(f[3])
+        self.mgrm = MGRM(f[3], grb_ratio=grb_ratio)
 
         # Skip processors
         self.ms1 = MultiscaleConnection(f[0], f[0])
@@ -73,7 +74,7 @@ class AMGUnet(nn.Module):
         self.dec1 = _DoubleConv(f[0]+f[0], f[0])   # 128  → 64
 
         self.head    = nn.Conv2d(f[0], num_classes, 1)
-        self.dropout = nn.Dropout2d(0.1)
+        self.dropout = nn.Dropout2d(dropout_rate)
 
         nn.init.kaiming_normal_(self.head.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(self.head.bias, 0)

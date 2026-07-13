@@ -68,7 +68,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.PolynomialLR(
                     optimizer, total_iters=args.epochs, power=LR_POWER)
 
-    start = 1; best_f1 = 0.0
+    start = 1; best_f1 = float("-inf")
     history = {'train_loss':[], 'val_loss':[], 'f1':[]}
     best_path = os.path.join(SAVE_DIR, "GraphUNet_pretrained_best.pth")
 
@@ -78,7 +78,7 @@ def main():
         optimizer.load_state_dict(ck['optimizer_state'])
         scheduler.load_state_dict(ck['scheduler_state'])
         start    = ck['epoch'] + 1
-        best_f1  = ck.get('best_f1', 0.0)
+        best_f1  = ck.get('best_f1', float("-inf"))
         history  = ck.get('history', history)
         print(f"Resumed from epoch {ck['epoch']}")
 
