@@ -7,10 +7,34 @@ transfer learning, attention U-Net components, graph reasoning, and Graph U-Net.
 satellite imagery, graph neural network, Graph U-Net, transfer learning,
 AMMG-UNet, PyTorch.
 
+![Software checks](https://img.shields.io/badge/software_checks-17%2F17_passed-2ea44f)
+![Headline modules](https://img.shields.io/badge/headline_modules-4%2F4_present-0ea5e9)
+![AMMG-style parameters](https://img.shields.io/badge/AMMG--style_parameters-15.85M-2563eb)
+![Graph U-Net parameters](https://img.shields.io/badge/Graph_U--Net_parameters-235.8K-7c3aed)
+![Notebook audit](https://img.shields.io/badge/notebook-26_cells_%7C_0_outputs-f59e0b)
+![Reproduction status](https://img.shields.io/badge/paper_reproduction-not_validated-b91c1c)
+
 > **Research status:** source code and tests are published; datasets,
 > checkpoints, paper PDFs, and generated results are intentionally excluded.
 > The models are experimental and are not presented as validated disaster
 > response systems.
+
+## Evidence at a glance
+
+| Reproduction check | Measured evidence | Result |
+| --- | --- | --- |
+| Software checks | Component, split, dataset, and notebook checks | **17/17 passed** |
+| Headline paper modules | Attention convolution, multiscale connection, MGRM, and GRB | **4/4 present - 100% concept coverage** |
+| Parameter scale | 15,849,914 local parameters / 48.1M reported | **Materially smaller** |
+| CAS source-data coverage | 4,273 / 20,865 matched image-mask pairs | **Partial local copy** |
+| Paper-comparable full experiment | Training and benchmark metrics were not rerun | **Not validated** |
+| Defensible overall reproduction claim | Requires architecture, data, protocol, and comparable held-out results | **No clone percentage published** |
+
+**Important:** 100% concept coverage only means that all four named ideas appear
+in the code. It is not 100% architectural fidelity or paper reproduction.
+Because major blocks differ and the full benchmark was not rerun, an overall
+80% or greater clone claim cannot be defended. This work is therefore presented
+as a **simplified AMMG-style prototype**.
 
 ## What is included
 
@@ -34,6 +58,53 @@ Gao and Ji Graph U-Nets
 Downloaded CAS / Hokkaido / Bijie data
   -> local-only inputs (never committed)
 ```
+
+## Architecture preview
+
+These diagrams are generated from the committed model code and render directly
+on GitHub. A prediction screenshot is intentionally not shown because the
+cleaned notebook contains no validated benchmark output.
+
+### Simplified AMMG-style U-Net
+
+```mermaid
+flowchart LR
+    I["RGB image<br/>3 x H x W"] --> E1["AttentionConv 1<br/>64 x H/2 x W/2"]
+    E1 --> E2["AttentionConv 2<br/>128 x H/4 x W/4"]
+    E2 --> E3["AttentionConv 3<br/>256 x H/8 x W/8"]
+    E3 --> E4["AttentionConv 4<br/>512 x H/16 x W/16"]
+    E4 --> M["MGRM bottleneck<br/>4 GRB branches at scales 1, 2, 3, 5"]
+    M --> D4["MS4 concat + DoubleConv<br/>256 x H/16 x W/16"]
+    D4 --> D3["Upsample + MS3 concat + DoubleConv<br/>128 x H/8 x W/8"]
+    D3 --> D2["Upsample + MS2 concat + DoubleConv<br/>64 x H/4 x W/4"]
+    D2 --> D1["Upsample + MS1 concat + DoubleConv<br/>64 x H/2 x W/2"]
+    D1 --> U["Bilinear upsample + dropout"]
+    U --> O["1 x 1 convolution<br/>2 x H x W logits"]
+
+    E4 -. multiscale skip .-> D4
+    E3 -. multiscale skip .-> D3
+    E2 -. multiscale skip .-> D2
+    E1 -. multiscale skip .-> D1
+```
+
+### Dense pixel-grid Graph U-Net
+
+```mermaid
+flowchart LR
+    GI["RGB patch<br/>3 x 16 x 16 default"] --> C["4-layer dilated CNN<br/>64 features per pixel"]
+    C --> G["8-connected pixel grid<br/>N = H x W nodes"]
+    G --> E0["GCN embedding<br/>64 to 128"]
+    E0 --> EN["4 encoder levels<br/>GCN + top-k gPool<br/>keep 90%, 70%, 60%, 50%"]
+    EN --> B["Deepest pooled graph"]
+    B --> DE["4 decoder levels<br/>gUnpool + skip-add + GCN"]
+    EN -.-> S["Saved pre-pool features<br/>graphs and node indices"]
+    S -.-> DE
+    DE --> H["Final GCN<br/>2 logits per node"]
+    H --> GO["Reshape<br/>2 x H x W segmentation logits"]
+```
+
+The cleaned Colab notebook is a separate SLIC-superpixel Graph U-Net variant,
+not another view of the dense pixel-grid model.
 
 ## Why the repository is source-only
 
@@ -132,6 +203,7 @@ with any published result.
 3. `03` - add Graph U-Net scripts and the cleaned Colab notebook.
 4. `04` - fix reproducibility and experimental controls.
 5. `05` - document architecture, attribution, setup, and limitations.
+6. `06` - add an evidence scorecard and GitHub-rendered architecture diagrams.
 
 ## Suggested GitHub topics
 

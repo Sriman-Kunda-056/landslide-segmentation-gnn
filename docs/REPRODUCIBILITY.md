@@ -14,7 +14,7 @@ The implementation in `ammg_unet/` is a simplified interpretation.
 
 | Aspect | Paper / official release | This repository |
 | --- | --- | --- |
-| Reported parameters | 48.1M | About 15.85M |
+| Reported parameters | 48.1M | 15,849,914 |
 | Encoder | Full-resolution stage plus deeper double-attention stages | Four single attention-downsampling stages |
 | Bottleneck | Larger MGRM with additional convolutions and fuller graph reasoning | Compact four-branch factorized graph block |
 | Decoder | Transposed convolution with attention blocks | Bilinear upsampling with double convolution |
@@ -23,6 +23,9 @@ The implementation in `ammg_unet/` is a simplified interpretation.
 
 Consequently, use "simplified AMMG-style prototype" in reports. Do not call it
 the paper architecture or use its metrics as reproduced paper values.
+
+The parameter-scale ratio is `15,849,914 / 48,100,000 = 33.0%`. This is a size
+comparison, not a measure of architectural fidelity or predictive accuracy.
 
 ## 2. Graph U-Net variants
 
@@ -73,9 +76,11 @@ Before training:
 5. Remove every target-region sample from the source-domain manifest.
 6. Record spatial resolution, resampling, cropping, and augmentation.
 
-The local CAS copy inspected during packaging was smaller than the 20,865-image
-paper dataset. It must not be described as the same source experiment without a
-verified manifest.
+The local CAS copy inspected during packaging contained 4,273 matched
+image-mask pairs, compared with 20,865 images stated for the paper source
+dataset: `4,273 / 20,865 = 20.5%`. This coverage ratio does not establish that
+the files use the identical release or preprocessing. It must not be described
+as the same source experiment without a verified manifest.
 
 The included Hokkaido preparation helper performs generic resizing. It does not
 reproduce the paper's geospatial 1-meter resampling and 512x512 tiling.
