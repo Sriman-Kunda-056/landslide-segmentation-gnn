@@ -19,6 +19,9 @@
 *.7z
 *.tar
 *.tar.gz
+*.pdf
+*.pptx
+*.docx
 
 # Python caches, environments, and coverage output
 __pycache__/
@@ -41,6 +44,11 @@ env/
 .env.*
 !.env.example
 
+# Workspace-specific utilities excluded from the portable source tree
+/graph_unet/prepare_all_datasets.py
+/graph_unet/prepare_bijie_data.py
+/graph_unet/test_cuda.py
+
 # Logs, temporary files, editors, and operating-system metadata
 *.log
 tmp/
@@ -49,4 +57,3 @@ tmp/
 .DS_Store
 Thumbs.db
 desktop.ini
-

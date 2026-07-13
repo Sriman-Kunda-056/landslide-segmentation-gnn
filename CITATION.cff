@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the repository and the referenced research papers."
+title: "Landslide Segmentation with Graph Neural Networks"
+type: software
+authors:
+  - family-names: "Kunda"
+    given-names: "Sriman"
+version: 0.1.0
+date-released: 2026-07-13
+repository-code: "https://github.com/Sriman-Kunda-056/landslide-segmentation-gnn"
+keywords:
+  - landslide detection
+  - semantic segmentation
+  - remote sensing
+  - graph neural networks
+  - Graph U-Net
+  - transfer learning
+  - PyTorch

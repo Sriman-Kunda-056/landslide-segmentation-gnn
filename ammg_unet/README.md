@@ -1,211 +1,150 @@
-# AMMG-UNet — Landslide Detection via Transfer Learning & GCN
+# Simplified AMMG-Style U-Net for Landslide Segmentation
 
-Implementation of the paper:
-> **"A proposed method for landslide detection based on transfer learning
-> and graph neural network"**
-> Luo et al., Geoscience Frontiers 16 (2025) 102171
+This directory contains an independent, simplified interpretation of ideas from:
 
----
+> W. Luo, H. Qiu, Y. Wei, et al. "A proposed method for landslide
+> detection based on transfer learning and graph neural network."
+> Geoscience Frontiers 16 (2025), 102171.
+> https://doi.org/10.1016/j.gsf.2025.102171
 
-## Project structure
+The paper links its official MIT-licensed implementation at
+https://github.com/anon-nameless/TL-landslide_detection.
 
+## Scope and fidelity
+
+This code combines attention downsampling, multiscale skip processing, a
+multiscale graph-reasoning bottleneck, and U-Net-style decoding. It is useful as
+a modular research prototype, but it is **not** a faithful reproduction of the
+paper or its official code.
+
+Key differences include:
+
+- approximately 15.85M parameters here versus 48.1M reported for AMMG-UNet;
+- fewer encoder stages and attention blocks;
+- a simplified graph reasoning block and MGRM;
+- bilinear decoding instead of the official transposed-convolution decoder;
+- two-class softmax Dice/cross-entropy instead of a one-logit sigmoid setup;
+- ImageNet normalization rather than dataset-specific statistics.
+
+Do not label metrics from this implementation as reproduced paper results.
+
+## Repository contents
+
+```text
+ammg_unet/
+  config.py                 paths and experiment settings
+  dataset.py                image/mask loading and deterministic splits
+  loss.py                   Dice + 0.5 * cross-entropy
+  metrics.py                recall, specificity, precision, and F1
+  pretrain.py               source-domain training
+  finetune.py               four target-domain conditions
+  test_components.py        model/loss/metric smoke tests
+  test_splits.py            split leakage regression tests
+  models/
+    attention_conv.py
+    multiscale.py
+    grb.py
+    mgrm.py
+    ammg_unet.py
+    baselines.py
+  data_prep/
+    prepare_hokkaido.py
+  utils/
+    trainer.py
 ```
-landslide_project/
-├── config.py               ← ALL hyperparameters and paths (edit here)
-├── dataset.py              ← data loading for all datasets
-├── loss.py                 ← Dice + CE combined loss (Eq 6-8)
-├── metrics.py              ← Recall, Spec, Prec, F1  (Eq 9-12)
-├── pretrain.py             ← Phase 1: pretrain on CAS / Bijie
-├── finetune.py             ← Phase 2: transfer learning (4 conditions)
-├── test_components.py      ← verify every module before training
-├── requirements.txt
-├── models/
-│   ├── grb.py              ← GraphReasoningBlock  (GCN core)
-│   ├── mgrm.py             ← Multiscale Global Reasoning Module
-│   ├── attention_conv.py   ← AttentionConv  (Eq 1-4)
-│   ├── multiscale.py       ← MultiscaleConnection  (Eq 5)
-│   ├── ammg_unet.py        ← Full AMMG-UNet
-│   └── baselines.py        ← Vanilla UNet baseline
-├── data_prep/
-│   └── prepare_hokkaido.py ← converts raw Hokkaido data → ready format
-├── utils/
-│   └── trainer.py          ← shared train/validate functions
-├── dataset/
-│   ├── bijie/images/       ← put Bijie images here
-│   ├── bijie/masks/
-│   ├── hokkaido/images/    ← output of prepare_hokkaido.py
-│   ├── hokkaido/masks/
-│   └── CAS/                ← CAS dataset (20 GB)
-├── save_weights/           ← model checkpoints saved here
-└── results/                ← training curves saved here
-```
 
----
+## Setup
 
-## Step 0 — Environment setup
+Python 3.10 or newer is recommended.
 
 ```bash
-conda create -n landslide python=3.10
-conda activate landslide
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# Linux/macOS: source .venv/bin/activate
 
-# GPU (CUDA 11.8)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-
-# or CPU only
 pip install torch torchvision
-
 pip install -r requirements.txt
 ```
 
----
+## Dataset layout
 
-## Step 1 — Prepare Hokkaido dataset
+Downloaded data is intentionally excluded from Git.
 
-Your raw Hokkaido folder must have this structure:
-```
-hokkaido_raw/
-    img/     ← PlanetScope RGB satellite images (.tif or .jpg)
-    mask/    ← binary raster masks (0=bg, 255=landslide)
-    label/   ← annotation files (used if mask/ is missing)
-```
-
-Run:
-```bash
-python data_prep/prepare_hokkaido.py \
-    --raw_dir /path/to/hokkaido_raw \
-    --out_dir dataset/hokkaido \
-    --size    512 \
-    --verify
+```text
+dataset/
+  CAS/
+    img/
+    mask/
+  hokkaido/
+    images/
+    masks/
+    label/        # optional fallback
+  bijie/
+    images/
+    masks/
 ```
 
-Expected output:
-```
-Found N images in .../img
-Saved: N   Skipped: 0
-Verification PASSED ✓
-```
+Before pretraining, verify the CAS manifest and explicitly exclude any target
+region (for example Hokkaido) to prevent source/target leakage. The paper used
+20,865 CAS images; a smaller local subset is not the same experiment.
 
----
+`data_prep/prepare_hokkaido.py` is a convenience conversion script. It resizes
+inputs to square patches and is not equivalent to the paper's geospatial
+1-meter resampling and 512x512 tiling workflow. Inspect several image/mask pairs
+after conversion before training.
 
-## Step 2 — Verify all components
+## Validation
 
 ```bash
 python test_components.py
+python -m unittest test_splits.py
 ```
 
-Expected:
-```
-GRB  ........ PASSED ✓
-MGRM ........ PASSED ✓
-AttentionConv PASSED ✓
-Multiscale .. PASSED ✓
-AMGUnet ..... PASSED ✓
-Loss ........ PASSED ✓
-Metrics ..... PASSED ✓
-ALL TESTS PASSED — ready to train
-```
+These tests check tensor shapes, finite gradients, loss/metrics behavior, and
+that the 20% training set is nested within the 60% pool while validation/test
+sets remain fixed and disjoint. They do not establish architectural fidelity or
+scientific accuracy.
 
----
-
-## Step 3 — Quick smoke test (Bijie dataset, 5 epochs)
-
-Download Bijie: https://github.com/SDU-L/CLPD/tree/main/dataset
+## Pretrain
 
 ```bash
-# Put images in dataset/bijie/images/  and masks in dataset/bijie/masks/
+python pretrain.py --dataset cas --epochs 150 --imgsize 512
+```
+
+For a short plumbing check:
+
+```bash
 python pretrain.py --dataset bijie --epochs 5 --imgsize 256
 ```
 
-Loss should decrease each epoch. F1 > 0 by epoch 3.
+The source-domain defaults follow the paper-inspired SGD configuration:
+momentum 0.9, weight decay 0.001, learning rate 0.01, and cubic polynomial
+decay.
 
----
-
-## Step 4 — Pretrain on source domain
-
-**Option A — Bijie (fast, ~1-2 hours on GPU):**
-```bash
-python pretrain.py --dataset bijie --imgsize 256
-```
-
-**Option B — CAS dataset (paper-accurate, ~20 hours on GPU):**
-
-Download CAS: https://zenodo.org/records/10294997
-
-```bash
-python pretrain.py --dataset cas --epochs 60
-# For exact paper reproduction: --epochs 150
-```
-
-Checkpoint saved to: `save_weights/AMGUnet_pretrained_best.pth`
-
----
-
-## Step 5 — Fine-tune on Hokkaido (Transfer Learning)
+## Fine-tune
 
 ```bash
 python finetune.py \
-    --pretrained save_weights/AMGUnet_pretrained_best.pth \
-    --dataset    hokkaido \
-    --epochs     30
+  --pretrained save_weights/AMGUnet_pretrained_best.pth \
+  --dataset hokkaido \
+  --epochs 50
 ```
 
-This runs all 4 experimental conditions from the paper:
-- Condition 1: 20% data, no transfer learning
-- Condition 2: 20% data, WITH transfer learning  ← key result
-- Condition 3: 60% data, no transfer learning
-- Condition 4: 60% data, WITH transfer learning
+The four conditions use a fixed held-out validation/test split:
 
-Expected results table (paper values for reference):
-```
-Condition          Recall   Spec    Prec    F1
-20% data, no TL    82.7%   95.9%   71.6%  76.8%
-20% data, WITH TL  78.8%   95.2%   78.6%  78.7%   ← ≈ condition 3
-60% data, no TL    76.7%   94.8%   81.0%  78.8%
-60% data, WITH TL  80.1%   95.5%   80.3%  80.2%   ← best
-```
+| Condition | Training fraction | Initialization |
+| --- | ---: | --- |
+| 1 | 20% | Random |
+| 2 | 20% | Pretrained |
+| 3 | 60% | Random |
+| 4 | 60% | Pretrained |
 
-Key finding: Condition 2 ≈ Condition 3 → transfer learning halves data requirement.
+All target-domain conditions use the same optimizer settings. Random flips are
+off by default; pass `--augment` only for a separately reported exploratory
+experiment.
 
----
+## Attribution
 
-## Configuration reference
-
-All settings in `config.py`:
-
-| Setting | Default | Paper value | Notes |
-|---------|---------|-------------|-------|
-| PRETRAIN_EPOCHS | 60 | 150 | Increase for full reproduction |
-| FINETUNE_EPOCHS | 30 | 50 | Increase for full reproduction |
-| PRETRAIN_LR | 0.01 | 0.01 | — |
-| FINETUNE_LR | 0.001 | 0.001 | 10× lower than pretrain |
-| BATCH_SIZE | 4 | 4 | Reduce to 2 if CUDA OOM |
-| IMG_SIZE | 512 | 512 | Use 256 for Bijie |
-| GCN_RATIO | 4 | 4 | Cr = in_ch // 4 = 128 at bottleneck |
-
----
-
-## Common errors
-
-| Error | Fix |
-|-------|-----|
-| `No images found` | Check img_dir path in config.py |
-| `Missing masks` | Run prepare_hokkaido.py first |
-| `CUDA out of memory` | Set PRETRAIN_BATCH=2 in config.py |
-| `Loss = NaN` | Check mask values are 0/255, not 0/1×255 float |
-| `F1 stuck at 0` | Check mask dtype is torch.long not torch.float |
-| `Shape mismatch in decoder` | Run test_components.py to isolate |
-
----
-
-## Paper architecture correspondence
-
-| Paper component | File | Class |
-|-----------------|------|-------|
-| Attention Conv (Eq 1-4) | models/attention_conv.py | AttentionConv |
-| Multiscale Connection (Eq 5) | models/multiscale.py | MultiscaleConnection |
-| Graph Reasoning Block | models/grb.py | GraphReasoningBlock |
-| MGRM (4-path GCN bridge) | models/mgrm.py | MGRM |
-| Full AMMG-UNet | models/ammg_unet.py | AMGUnet |
-| Loss (Eq 6-8) | loss.py | CombinedLoss |
-| Metrics (Eq 9-12) | metrics.py | compute_metrics |
-| Transfer learning | finetune.py | run_condition |
+The official repository's MIT notice is preserved in
+`../licenses/TL-landslide_detection-MIT.txt`. Cite both the paper and any
+upstream code used in derived work.
